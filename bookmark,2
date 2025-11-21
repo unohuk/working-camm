@@ -1,0 +1,171 @@
+javascript:(function(){
+  const existing = document.getElementById('answerStatusBar');
+  if (existing) {
+    clearInterval(existing.dataset.intervalId);
+    existing.remove();
+    return;
+  }
+
+  const statusBar = document.createElement('div');
+  statusBar.id = 'answerStatusBar';
+  statusBar.style.cssText = `
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: #1a202c; color: white;
+    padding: 8px 15px;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    z-index: 10000;
+    border-top: 2px solid #4a5568;
+    display: flex; justify-content: space-between; align-items: center;
+  `;
+  statusBar.innerHTML = `
+    <div style="flex:1; overflow:hidden;">
+      <div id="answerContainer" style="display:flex; flex-direction:column; transition:transform 0.5s ease;">
+        <div><strong>Current Answer:</strong>
+          <span id="statusAnswer" style="margin-left: 10px; font-weight: bold; color: #68d391;">Loading...</span>
+        </div>
+        <div><strong>Previous Answer:</strong>
+          <span id="statusPrev" style="margin-left: 10px; font-weight: bold; color: #f6ad55;">--</span>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <span id="statusTime" style="color:#a0aec0; font-size:11px;">--:--:--</span>
+      <button id="statusCopy" style="background:#4a5568; color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer; font-size:11px;">Copy</button>
+      <button id="statusAuto" style="background:#3182ce; color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer; font-size:11px;">AutoCopy: Off</button>
+      <span id="statusMsg" style="color:#a0aec0; font-size:11px;"></span>
+      <button id="statusClose" style="background:#e53e3e; color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer; font-size:11px;">×</button>
+    </div>
+  `;
+  document.body.appendChild(statusBar);
+
+  const answerEl = statusBar.querySelector('#statusAnswer');
+  const prevEl = statusBar.querySelector('#statusPrev');
+  const timeEl = statusBar.querySelector('#statusTime');
+  const copyBtn = statusBar.querySelector('#statusCopy');
+  const autoBtn = statusBar.querySelector('#statusAuto');
+  const msgEl = statusBar.querySelector('#statusMsg');
+  const closeBtn = statusBar.querySelector('#statusClose');
+
+  let autoCopy = false;
+  let lastAnswer = null;
+  let clipboardReady = false; // permission or successful write achieved
+  let lastCopied = null;
+
+  closeBtn.onclick = () => {
+    clearInterval(statusBar.dataset.intervalId);
+    statusBar.remove();
+  };
+
+  function showMsg(text, timeout = 2000) {
+    msgEl.textContent = text;
+    if (timeout) setTimeout(() => { if (msgEl.textContent === text) msgEl.textContent = ''; }, timeout);
+  }
+
+  async function writeClipboard(text) {
+   
+    try {
+      
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const perm = await navigator.permissions.query({ name: 'clipboard-write' });
+          clipboardReady = perm.state === 'granted' || perm.state === 'prompt';
+        } catch (_) { /* ignore */ }
+      }
+      await navigator.clipboard.writeText(text);
+      clipboardReady = true;
+      lastCopied = text;
+      return true;
+    } catch (_) {
+      
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.style.left = '-1000px';
+        ta.setAttribute('readonly', '');
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) {
+          clipboardReady = true;
+          lastCopied = text;
+          return true;
+        }
+      } catch (_) { /* ignore */ }
+    }
+    return false;
+  }
+
+  copyBtn.onclick = async () => {
+    const answer = answerEl.textContent;
+    if (answer && !['Loading...', 'Not found', 'Error'].includes(answer)) {
+      const ok = await writeClipboard(answer);
+      if (ok) {
+        copyBtn.textContent = 'Copied!';
+        showMsg('Copied to clipboard');
+        setTimeout(() => copyBtn.textContent = 'Copy', 1500);
+      } else {
+        showMsg('Clipboard blocked. Click Copy manually.');
+      }
+    }
+  };
+
+  autoBtn.onclick = async () => {
+    autoCopy = !autoCopy;
+    autoBtn.textContent = `AutoCopy: ${autoCopy ? 'On' : 'Off'}`;
+    if (autoCopy) {
+      // Use this click as a user gesture to prime clipboard
+      const primeText = answerEl.textContent && !['Loading...', 'Not found', 'Error'].includes(answerEl.textContent)
+        ? answerEl.textContent
+        : ' ';
+      const ok = await writeClipboard(primeText);
+      showMsg(ok ? 'Auto-copy enabled' : 'Auto-copy may be blocked. Click Copy once.');
+    } else {
+      showMsg('Auto-copy disabled');
+    }
+  };
+
+  async function updateAnswer() {
+    try {
+      const response = await fetch(window.location.href, { cache: 'no-store' });
+      const text = await response.text();
+      const matches = [...text.matchAll(/"number":\s*([0-9.]+)/g)];
+      if (matches.length) {
+        const newAnswers = matches.map(m => parseFloat(m[1]));
+        const answerStr = newAnswers.join(', ');
+
+        if (answerStr !== lastAnswer) {
+          prevEl.textContent = lastAnswer || '--';
+          answerEl.textContent = answerStr;
+          timeEl.textContent = new Date().toLocaleTimeString();
+          lastAnswer = answerStr;
+
+          const container = statusBar.querySelector('#answerContainer');
+          container.style.transform = 'translateY(-20px)';
+          setTimeout(() => container.style.transform = 'translateY(0)', 500);
+
+       
+          if (autoCopy && answerStr !== lastCopied) {
+            const ok = await writeClipboard(answerStr);
+            if (!ok) {
+              showMsg('Auto-copy blocked. Click Copy once to enable.');
+            }
+          }
+        }
+      } else {
+        answerEl.textContent = 'Not found';
+      }
+    } catch (err) {
+      answerEl.textContent = 'Error';
+      console.error(err);
+    }
+  }
+
+  const intervalId = setInterval(updateAnswer, 1000);
+  statusBar.dataset.intervalId = intervalId;
+  updateAnswer();
+})();
