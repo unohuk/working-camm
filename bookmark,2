@@ -50,7 +50,7 @@ javascript:(function(){
 
   let autoCopy = false;
   let lastAnswer = null;
-  let clipboardReady = false; // permission or successful write achieved
+  let clipboardReady = false; 
   let lastCopied = null;
 
   closeBtn.onclick = () => {
